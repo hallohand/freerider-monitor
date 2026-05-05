@@ -2,7 +2,10 @@ name: Freerider Monitor
 
 on:
   schedule:
-    - cron: "* * * * *"
+    # Alle 5 min — innerhalb jedes Runs läuft ein 4-Minuten-Watch-Loop,
+    # so dass der Bot praktisch jede Minute reagiert (Latenz max ~1 min)
+    # ohne sich auf GH's unzuverlässige minütige Schedules zu verlassen.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +18,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
 
     steps:
       - name: Checkout monitor repo (code)
@@ -28,14 +31,20 @@ jobs:
           token: ${{ secrets.STATE_REPO_TOKEN }}
           path: state-repo
 
-      - name: Run monitor
+      - name: Run monitor (5-Iterations-Watch-Loop)
         env:
           TELEGRAM_KEY: ${{ secrets.TELEGRAM_KEY }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           STATE_FILE: state-repo/state/known-ids.txt
           LAST_UPDATE_FILE: state-repo/state/last-update-id.txt
           FILTERS_FILE: state-repo/state/filters.json
-        run: ./freerider-monitor-telegram.sh
+        run: |
+          for i in 1 2 3 4 5; do
+            echo "::group::Iteration $i / 5"
+            ./freerider-monitor-telegram.sh
+            echo "::endgroup::"
+            [ "$i" -lt 5 ] && sleep 60
+          done
 
       - name: Commit state-changes (state-repo)
         working-directory: state-repo

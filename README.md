@@ -35,9 +35,11 @@ Lokal:
 ./freerider-monitor.sh 60        # Loop mit 1-Min-Intervall
 ```
 
-GitHub Actions: Workflow läuft jede Minute (`* * * * *`). GitHub
-liefert minütige Crons in der Praxis nicht millisekunden-präzise —
-echte Latenz pro Bot-Reply liegt typisch bei 1–3 min.
+GitHub Actions: Workflow startet alle 5 min (`*/5 * * * *`) und
+läuft pro Run ~4 min lang in einem inneren Loop, der das Skript
+5×/Min mit 60-s-Pausen aufruft. Damit reagiert der Bot praktisch
+jede Minute, ohne auf GH's unzuverlässige minütige Schedules
+angewiesen zu sein. Echte Bot-Reply-Latenz: 0–60 s.
 State-Files liegen im privaten Schwester-Repo
 [hallohand/freerider-monitor-state](https://github.com/hallohand/freerider-monitor-state)
 (Files: `state/known-ids.txt`, `state/last-update-id.txt`,
