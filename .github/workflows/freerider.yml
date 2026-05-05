@@ -2,12 +2,11 @@ name: Freerider Monitor
 
 on:
   schedule:
-    # Alle 10 min — Kompromiss zwischen Frische und Cron-Quota.
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: freerider-monitor
@@ -19,18 +18,25 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Checkout
+      - name: Checkout monitor repo (code)
         uses: actions/checkout@v4
+
+      - name: Checkout state repo (private)
+        uses: actions/checkout@v4
+        with:
+          repository: hallohand/freerider-monitor-state
+          token: ${{ secrets.STATE_REPO_TOKEN }}
+          path: state-repo
 
       - name: Run monitor
         env:
           TELEGRAM_KEY: ${{ secrets.TELEGRAM_KEY }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          mkdir -p state
-          ./freerider-monitor-telegram.sh
+          STATE_FILE: state-repo/state/known-ids.txt
+        run: ./freerider-monitor-telegram.sh
 
-      - name: Commit state-changes (falls neue IDs)
+      - name: Commit state-changes (state-repo)
+        working-directory: state-repo
         run: |
           if [[ -n "$(git status --porcelain state/known-ids.txt)" ]]; then
             git config user.name "github-actions[bot]"

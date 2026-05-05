@@ -2,10 +2,10 @@
 hertz-data.json
 movacar-data.json
 
-# State-Persistierung — Repo-Root-State: nur known-ids.txt versionieren,
-# alles andere (z.B. Test-Caches) ignorieren.
-/state/*
-!/state/known-ids.txt
+# State liegt jetzt im privaten Schwester-Repo
+# hallohand/freerider-monitor-state. Lokales state/-Verzeichnis ist nur
+# für Test-Läufe und gehört nicht ins Repo.
+/state/
 .cache/
 
 # Tooling-Spuren (lokale Brainstorm-Server-Artefakte)
