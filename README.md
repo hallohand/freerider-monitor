@@ -41,9 +41,18 @@ committed. Logs: GitHub-Actions-Tab.
 
 ## Secrets (nur in GitHub Actions / `.env.local`)
 
-- `TELEGRAM_BOT_TOKEN` — von `@BotFather`
-- `TELEGRAM_CHAT_ID` — numerische Chat-ID, nach erstem Bot-Kontakt via
+- `TELEGRAM_KEY` — Bot-Token von `@BotFather`
+- `CHAT_ID` — numerische Chat-ID, nach erstem Bot-Kontakt via
   `https://api.telegram.org/bot<TOKEN>/getUpdates` ablesen
+  (Feld `result[].message.chat.id` — User-IDs sind 9–10-stellig
+  positiv, nicht mit der Bot-User-ID verwechseln)
+
+`.env.local` ist gitignored. Format:
+
+```
+TELEGRAM_KEY=<bot-token-from-botfather>
+CHAT_ID=<numeric-user-id>
+```
 
 ## Bot-Token rotieren
 
