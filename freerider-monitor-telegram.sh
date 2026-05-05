@@ -11,6 +11,7 @@
 # Env (optional):
 #   STATE_FILE           — Default state/known-ids.txt
 #   LAST_UPDATE_FILE     — Default state/last-update-id.txt
+#   FILTERS_FILE         — Default state/filters.json
 #   WHITELIST_CHAT_IDS   — kommagetrennte Liste, Default = CHAT_ID
 #
 # Ablauf:
@@ -29,6 +30,7 @@ HERTZ_API="https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN"
 DRIVEBACK_URL="https://www.driveback.se/resor"
 STATE_FILE="${STATE_FILE:-state/known-ids.txt}"
 LAST_UPDATE_FILE="${LAST_UPDATE_FILE:-state/last-update-id.txt}"
+FILTERS_FILE="${FILTERS_FILE:-state/filters.json}"
 
 # Lokal: .env.local laden falls vorhanden. CI: Vars sind schon im Env.
 if [ -f .env.local ] && [ -z "${TELEGRAM_KEY:-}" ]; then
@@ -40,7 +42,7 @@ fi
 
 WHITELIST_CHAT_IDS="${WHITELIST_CHAT_IDS:-${CHAT_ID}}"
 
-mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LAST_UPDATE_FILE")"
+mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LAST_UPDATE_FILE")" "$(dirname "$FILTERS_FILE")"
 
 SILENT_INIT=false
 if [ ! -f "$STATE_FILE" ]; then
@@ -74,6 +76,42 @@ is_whitelisted() {
 }
 
 # ---------------------------------------------------------------------------
+# Stadt-Normalisierung (case-insensitive + Diakritika weg)
+# ---------------------------------------------------------------------------
+
+normalize_city() {
+    echo "$1" | \
+      sed -e 's/[åÅ]/a/g' -e 's/[äÄãÃáÁàÀâÂ]/a/g' -e 's/[æÆ]/ae/g' \
+          -e 's/[öÖóÓòÒôÔ]/o/g' -e 's/[øØ]/o/g' \
+          -e 's/[éÉèÈêÊë]/e/g' \
+          -e 's/[üÜúÚûÛ]/u/g' \
+          -e 's/[íÍì]/i/g' \
+          -e 's/[çÇ]/c/g' -e 's/[ñÑ]/n/g' \
+          -e 's/[ßẞ]/ss/g' | \
+      tr '[:upper:]' '[:lower:]' | \
+      sed "s/[\"'\` ]//g"
+}
+
+normalize_city_list() {
+    local input="$1"
+    local out=""
+    IFS=',' read -ra parts <<< "$input"
+    for p in "${parts[@]}"; do
+        local n
+        n=$(normalize_city "$p")
+        [ -z "$n" ] && continue
+        out+="${n},"
+    done
+    echo "${out%,}"
+}
+
+ensure_filters_file() {
+    if [ ! -f "$FILTERS_FILE" ]; then
+        echo '[]' > "$FILTERS_FILE"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Bot-Commands
 # ---------------------------------------------------------------------------
 
@@ -81,13 +119,23 @@ cmd_help() {
     local cid="$1"
     send_message "$cid" "🚗 Freerider-Monitor — Commands
 
-/start  — Begrüßung
-/help   — diese Übersicht
+/start         Begrüßung
+/help          diese Übersicht
+/filters       aktive Filter zeigen
+/addfilter     Filter anlegen oder überschreiben
+/removefilter  Filter mit Namen löschen
+/clear         alle Filter löschen
+/search        Live-Suche ohne Filter zu speichern (folgt)
 
-Du bekommst automatisch Pushes für neue Mietwagen-Rückführungen
-aus Hertz Freerider und DriveBack (alle 5 min).
+Filter-Syntax (alle Felder außer name optional, Reihenfolge egal):
+/addfilter <name> from=A,B to=C,D pickup_after=YYYY-MM-DD pickup_before=YYYY-MM-DD deliver_before=YYYY-MM-DD
 
-Filter und /search folgen in nächsten Updates."
+Stadtnamen sind case-insensitive und Diakritika-toleriert
+(Skellefteå ≡ skelleftea). Mehrere Städte mit Komma trennen.
+
+Ohne Filter werden alle neuen Routen gepusht. Mit Filtern: ein
+Push nur wenn eine neue Route mindestens einem Filter komplett
+entspricht (AND innerhalb, OR über Filter)."
 }
 
 cmd_start() {
@@ -95,7 +143,109 @@ cmd_start() {
     send_message "$cid" "👋 Bot ist aktiv.
 
 Du bekommst Pushes für neue Mietwagen-Rückführungen aus Hertz
-Freerider und DriveBack. Tippe /help für eine Command-Übersicht."
+Freerider und DriveBack (alle 5 min). Tippe /help für die
+Command-Übersicht inklusive Filter-Syntax."
+}
+
+# ---------------------------------------------------------------------------
+# Filter-CRUD
+# ---------------------------------------------------------------------------
+
+cmd_addfilter() {
+    local cid="$1"; shift
+    local name="${1:-}"
+    if [ -z "$name" ]; then
+        send_message "$cid" "Nutzung: /addfilter <name> [from=A,B] [to=C,D] [pickup_after=YYYY-MM-DD] [pickup_before=YYYY-MM-DD] [deliver_before=YYYY-MM-DD]"
+        return
+    fi
+    shift
+
+    local from="" to="" pa="" pb="" db=""
+    while [ -n "${1:-}" ]; do
+        case "$1" in
+            from=*)           from="${1#from=}" ;;
+            to=*)             to="${1#to=}" ;;
+            pickup_after=*)   pa="${1#pickup_after=}" ;;
+            pickup_before=*)  pb="${1#pickup_before=}" ;;
+            deliver_before=*) db="${1#deliver_before=}" ;;
+        esac
+        shift
+    done
+
+    local from_norm to_norm
+    from_norm=$(normalize_city_list "$from")
+    to_norm=$(normalize_city_list "$to")
+
+    ensure_filters_file
+    local tmp; tmp=$(mktemp)
+    jq --arg name "$name" \
+       --arg from "$from_norm" \
+       --arg to "$to_norm" \
+       --arg pa "$pa" \
+       --arg pb "$pb" \
+       --arg db "$db" \
+       'map(select(.name != $name)) + [{
+            name: $name,
+            from_cities: ($from | if . == "" then [] else split(",") end),
+            to_cities:   ($to   | if . == "" then [] else split(",") end),
+            pickup_after:    ($pa | if . == "" then null else . end),
+            pickup_before:   ($pb | if . == "" then null else . end),
+            deliver_before:  ($db | if . == "" then null else . end)
+        }]' "$FILTERS_FILE" > "$tmp" && mv "$tmp" "$FILTERS_FILE"
+
+    local count; count=$(jq 'length' "$FILTERS_FILE")
+    send_message "$cid" "✓ Filter '${name}' gespeichert (gesamt: ${count}).
+
+from: ${from_norm:-(beliebig)}
+to: ${to_norm:-(beliebig)}
+pickup_after: ${pa:-(egal)}
+pickup_before: ${pb:-(egal)}
+deliver_before: ${db:-(egal)}"
+}
+
+cmd_filters() {
+    local cid="$1"
+    ensure_filters_file
+    local count; count=$(jq 'length' "$FILTERS_FILE")
+    if [ "$count" -eq 0 ]; then
+        send_message "$cid" "Keine aktiven Filter.
+Backstop: alle neuen Routen werden gepusht."
+        return
+    fi
+    local list
+    list=$(jq -r '.[] |
+        "• \(.name)\n  from: \(.from_cities | if length == 0 then "(beliebig)" else join(",") end)\n  to: \(.to_cities | if length == 0 then "(beliebig)" else join(",") end)\n  pickup: \(.pickup_after // "*") .. \(.pickup_before // "*")\n  deliver_before: \(.deliver_before // "(egal)")"' "$FILTERS_FILE")
+    send_message "$cid" "Aktive Filter (${count}):
+
+${list}"
+}
+
+cmd_removefilter() {
+    local cid="$1"; shift
+    local name="${1:-}"
+    if [ -z "$name" ]; then
+        send_message "$cid" "Nutzung: /removefilter <name>"
+        return
+    fi
+    ensure_filters_file
+    local before; before=$(jq 'length' "$FILTERS_FILE")
+    local tmp; tmp=$(mktemp)
+    jq --arg name "$name" 'map(select(.name != $name))' "$FILTERS_FILE" > "$tmp" && mv "$tmp" "$FILTERS_FILE"
+    local after; after=$(jq 'length' "$FILTERS_FILE")
+    if [ "$before" = "$after" ]; then
+        send_message "$cid" "Kein Filter mit Name '${name}' gefunden. Aktive: ${after}."
+    else
+        send_message "$cid" "✓ Filter '${name}' gelöscht. Verbleibend: ${after}."
+    fi
+}
+
+cmd_clear() {
+    local cid="$1"
+    ensure_filters_file
+    local before; before=$(jq 'length' "$FILTERS_FILE")
+    echo '[]' > "$FILTERS_FILE"
+    send_message "$cid" "✓ Alle Filter gelöscht (${before} entfernt).
+Backstop aktiv: alle neuen Routen werden gepusht."
 }
 
 # ---------------------------------------------------------------------------
@@ -144,15 +294,22 @@ process_updates() {
             continue
         fi
 
-        # Strip @bot-suffix, normalize
+        # Strip @bot-suffix, isolate command + args
         local cmd="${text%% *}"
         cmd="${cmd%@*}"
+        local args="${text#"${text%% *}"}"
+        args="${args# }"
 
+        # shellcheck disable=SC2086 — args wird absichtlich word-gesplittet
         case "$cmd" in
-            /start) cmd_start "$chat_id" ;;
-            /help)  cmd_help  "$chat_id" ;;
-            "")     ;;  # leere/Non-Text-Updates ignorieren
-            *)      ;;  # unbekannte Commands silent ignorieren
+            /start)        cmd_start        "$chat_id" ;;
+            /help)         cmd_help         "$chat_id" ;;
+            /filters)      cmd_filters      "$chat_id" ;;
+            /clear)        cmd_clear        "$chat_id" ;;
+            /addfilter)    cmd_addfilter    "$chat_id" $args ;;
+            /removefilter) cmd_removefilter "$chat_id" $args ;;
+            "")            ;;
+            *)             ;;
         esac
         processed=$((processed + 1))
     done < <(echo "$response" | jq -r '.result[] | [.update_id, (.message.chat.id // ""), (.message.text // "")] | @tsv')

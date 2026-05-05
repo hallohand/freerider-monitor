@@ -34,6 +34,7 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           STATE_FILE: state-repo/state/known-ids.txt
           LAST_UPDATE_FILE: state-repo/state/last-update-id.txt
+          FILTERS_FILE: state-repo/state/filters.json
         run: ./freerider-monitor-telegram.sh
 
       - name: Commit state-changes (state-repo)
