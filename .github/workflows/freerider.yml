@@ -43,7 +43,7 @@ jobs:
             echo "::group::Iteration $i / 5"
             ./freerider-monitor-telegram.sh
             echo "::endgroup::"
-            [ "$i" -lt 5 ] && sleep 60
+            if [ "$i" -lt 5 ]; then sleep 60; fi
           done
 
       - name: Commit state-changes (state-repo)
