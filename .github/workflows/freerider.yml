@@ -1,0 +1,43 @@
+name: Freerider Monitor
+
+on:
+  schedule:
+    # Alle 10 min — Kompromiss zwischen Frische und Cron-Quota.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: freerider-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run monitor
+        env:
+          TELEGRAM_KEY: ${{ secrets.TELEGRAM_KEY }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          mkdir -p state
+          ./freerider-monitor-telegram.sh
+
+      - name: Commit state-changes (falls neue IDs)
+        run: |
+          if [[ -n "$(git status --porcelain state/known-ids.txt)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/known-ids.txt
+            git commit -m "state: known-ids aktualisiert ($(date -u +%Y-%m-%dT%H:%MZ))"
+            git push
+          else
+            echo "Keine State-Änderungen."
+          fi
