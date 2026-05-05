@@ -58,12 +58,26 @@ fi
 send_message() {
     local target_chat_id="$1"
     local text="$2"
-    curl -s --max-time 15 \
+    local response
+    response=$(curl -s --max-time 15 \
         --data-urlencode "chat_id=${target_chat_id}" \
         --data-urlencode "text=${text}" \
         --data-urlencode "disable_web_page_preview=true" \
-        "https://api.telegram.org/bot${TELEGRAM_KEY}/sendMessage" \
-        > /dev/null
+        "https://api.telegram.org/bot${TELEGRAM_KEY}/sendMessage" 2>&1) || {
+        echo "[send] curl-Fehler an chat=${target_chat_id}: $response" >&2
+        return 0
+    }
+    local ok
+    ok=$(echo "$response" | jq -r '.ok // false' 2>/dev/null || echo "parse-fail")
+    if [ "$ok" != "true" ]; then
+        local desc
+        desc=$(echo "$response" | jq -r '.description // "unbekannt"' 2>/dev/null || echo "$response")
+        echo "[send] FAIL chat=${target_chat_id}: ${desc}" >&2
+    else
+        local mid
+        mid=$(echo "$response" | jq -r '.result.message_id // "?"')
+        echo "[send] OK chat=${target_chat_id} message_id=${mid} chars=${#text}" >&2
+    fi
 }
 
 notify_telegram() {
