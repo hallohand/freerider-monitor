@@ -5,20 +5,26 @@ Monitort drei Quellen für kostenlose/günstige Mietwagen-Rückführungen
 
 ## Quellen
 
-| Quelle              | Endpoint                                                                                | Format     |
-|---------------------|-----------------------------------------------------------------------------------------|------------|
-| Hertz Freerider     | `https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN`                     | JSON-Array |
-| DriveBack           | `https://www.driveback.se/resor`                                                         | JSON-Array |
-| Movacar             | `https://crowd-api-production-615013621295.europe-west1.run.app/v1/{locations,offers}`   | JSON:API   |
+| Quelle              | Endpoint                                                                                | Format     | Status        |
+|---------------------|-----------------------------------------------------------------------------------------|------------|---------------|
+| Hertz Freerider     | `https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN`                     | JSON-Array | aktiv         |
+| DriveBack           | `https://www.driveback.se/resor`                                                         | JSON-Array | aktiv         |
+| Movacar             | `https://crowd-api-production-615013621295.europe-west1.run.app/v1/{locations,offers}`   | JSON:API   | **deaktiviert (Stand 2026-05-05)** |
+
+**Movacar deaktiviert:** Eigentümer-Entscheidung 2026-05-05. Skript
+`movacar-scrape.py` und Daten-Snapshots bleiben im Repo (sunk cost,
+reaktivierbar), werden aber nicht mehr im 24/7-Workflow ausgeführt.
 
 ## Skripte
 
 - `freerider-monitor.sh [INTERVAL]` — lokaler Endlos-Loop mit Desktop-
-  Notifications (notify-send + paplay). Default-Intervall 300 s.
+  Notifications (notify-send + paplay), prüft Hertz Freerider +
+  DriveBack. Default-Intervall 300 s.
 - `freerider-monitor-telegram.sh` — One-shot-Variante für GitHub-Actions-
   Cron, sendet Treffer per Telegram (siehe `.github/workflows/`).
-- `update-data.sh` / `update-movacar.sh` — manuelle Snapshot-Updates.
-- `movacar-scrape.py` — Python-Scraper für tiefere Movacar-Daten.
+- `update-data.sh` — manuelle Snapshot-Updates der aktiven Quellen.
+- `movacar-scrape.py` / `update-movacar.sh` — *deaktiviert.* Bleibt im
+  Repo, läuft aber nicht im 24/7-Workflow.
 - `start-map.sh` + `map.html` — visualisiert Snapshots auf Karte.
 
 ## Lauf-Anleitung
