@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Freerider Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; display: flex; height: 100vh; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 360px; min-width: 360px; height: 100vh;
+    background: #16213e; display: flex; flex-direction: column;
+    border-right: 1px solid #0f3460; z-index: 1000; overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 20px; border-bottom: 1px solid #0f3460;
+  }
+  .sidebar-header h1 {
+    font-size: 22px; font-weight: 700; color: #e94560; margin-bottom: 10px;
+  }
+
+  /* Source badges */
+  #source-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .source-badge {
+    font-size: 12px; font-weight: 600; padding: 3px 10px;
+    border-radius: 12px; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .source-badge .count { opacity: 0.85; }
+  .source-badge.hertz    { background: #f5c518; color: #1a1a2e; }
+  .source-badge.driveback { background: #2ecc71; color: #1a1a2e; }
+  .source-badge.movacar   { background: #3498db; color: #fff; }
+
+  /* Filters */
+  #filters {
+    padding: 12px 20px; border-bottom: 1px solid #0f3460;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: #0f3460; color: #aaa; border: 1px solid #1a4080;
+    padding: 5px 12px; border-radius: 6px; font-size: 12px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .filter-btn:hover { border-color: #e94560; color: #eee; }
+  .filter-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+
+  /* Toggle bar */
+  #toggle-bar {
+    padding: 10px 20px; border-bottom: 1px solid #0f3460;
+    display: flex; gap: 0; align-items: center;
+  }
+  #toggle-bar:empty { padding: 0; border-bottom: none; }
+  .toggle-btn {
+    flex: 1; padding: 8px 12px; border: 1px solid #1a4080;
+    background: #0f3460; color: #aaa; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s; text-align: center;
+  }
+  .toggle-btn:first-child { border-radius: 6px 0 0 6px; }
+  .toggle-btn:last-child { border-radius: 0 6px 6px 0; }
+  .toggle-btn.departures.active { background: #e94560; color: #fff; border-color: #e94560; }
+  .toggle-btn.arrivals.active { background: #4CAF50; color: #fff; border-color: #4CAF50; }
+  .toggle-label { font-size: 13px; color: #aaa; }
+  .toggle-switch {
+    width: 36px; height: 20px; background: #0f3460;
+    border-radius: 10px; position: relative; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle-switch.on { background: #e94560; }
+  .toggle-switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: #fff; border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle-switch.on::after { transform: translateX(16px); }
+
+  /* Selected info */
+  #selected-info {
+    padding: 16px 20px; border-bottom: 1px solid #0f3460;
+  }
+  #selected-info .hint { color: #666; font-size: 13px; font-style: italic; }
+  #selected-info .location-name {
+    font-size: 18px; font-weight: 700; color: #e94560;
+  }
+  #selected-info .location-meta { font-size: 12px; color: #888; margin-top: 4px; }
+
+  /* Route list */
+  #route-list {
+    flex: 1; overflow-y: auto; padding: 12px 20px;
+  }
+  #route-list::-webkit-scrollbar { width: 6px; }
+  #route-list::-webkit-scrollbar-track { background: #16213e; }
+  #route-list::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+
+  .route-card {
+    background: #0f3460; border-radius: 8px; padding: 14px;
+    margin-bottom: 10px; border: 1px solid #1a4080;
+    transition: border-color 0.2s; cursor: default;
+  }
+  .route-card:hover { border-color: #e94560; }
+  .route-card .route-source {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 6px;
+  }
+  .route-card .route-source.hertz { color: #f5c518; }
+  .route-card .route-source.driveback { color: #2ecc71; }
+  .route-card .route-source.movacar { color: #3498db; }
+  .route-card .route-endpoints {
+    font-size: 14px; font-weight: 600; color: #eee; margin-bottom: 6px;
+  }
+  .route-card .route-endpoints .arrow { color: #e94560; margin: 0 6px; }
+  .route-card .route-details {
+    font-size: 12px; color: #888; display: flex; flex-wrap: wrap; gap: 10px;
+  }
+  .route-card .route-vehicle { font-size: 13px; color: #bbb; margin-bottom: 4px; }
+
+  /* Map container */
+  #map-container { flex: 1; position: relative; }
+  #map { width: 100%; height: 100%; }
+
+  /* Loading overlay */
+  #loading-overlay {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(26, 26, 46, 0.92); display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    z-index: 2000;
+  }
+  #loading-overlay.hidden { display: none; }
+  .spinner {
+    width: 48px; height: 48px; border: 4px solid #0f3460;
+    border-top-color: #e94560; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { margin-top: 16px; color: #aaa; font-size: 14px; }
+  .loading-status { margin-top: 8px; color: #666; font-size: 12px; }
+
+  /* Legend */
+  .legend {
+    position: absolute; bottom: 24px; right: 24px;
+    background: rgba(22, 33, 62, 0.92); border: 1px solid #0f3460;
+    border-radius: 8px; padding: 14px 18px; z-index: 1000;
+    font-size: 12px;
+  }
+  .legend-title { font-weight: 700; color: #e94560; margin-bottom: 8px; font-size: 13px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .legend-dot {
+    width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff;
+    flex-shrink: 0;
+  }
+  .legend-item span { color: #ccc; }
+
+  /* Hint text */
+  .hint { color: #666; font-size: 13px; font-style: italic; text-align: center; padding: 20px 0; }
+
+  /* Refresh button */
+  #refresh-btn {
+    background: none; border: 1px solid #0f3460; color: #7a8ba8; font-size: 20px;
+    width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+  }
+  #refresh-btn:hover { color: #e94560; border-color: #e94560; }
+  #refresh-btn.spinning { animation: spin 1s linear infinite; color: #e94560; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* Leaflet tooltip override */
+  .leaflet-tooltip {
+    background: #16213e; color: #eee; border: 1px solid #0f3460;
+    border-radius: 4px; font-size: 12px; padding: 4px 8px;
+  }
+  .leaflet-tooltip-top::before { border-top-color: #0f3460; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h1>Freerider Map</h1>
+      <button id="refresh-btn" onclick="refreshData(false)" title="Daten aktualisieren">&#x21bb;</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+      <div id="source-badges"></div>
+      <span id="last-update" style="font-size:10px;color:#7a8ba8;white-space:nowrap"></span>
+    </div>
+  </div>
+  <div id="filters"></div>
+  <div id="toggle-bar"></div>
+  <div id="selected-info">
+    <p class="hint">Klick auf einen Punkt um Routen zu sehen</p>
+  </div>
+  <div id="route-list"></div>
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text">Lade Routen...</div>
+    <div class="loading-status" id="loading-status">Verbinde mit Datenquellen...</div>
+  </div>
+  <div class="legend">
+    <div class="legend-title">Legende</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e94560;"></div><span>Standort (Abholung / Abgabe)</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f5c518;"></div><span>Hertz Freerider</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2ecc71;"></div><span>DriveBack</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3498db;"></div><span>Movacar</span></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ============================================================
+// Leaflet Map
+// ============================================================
+const map = L.map('map', { zoomControl: true }).setView([62, 16], 5);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+  subdomains: 'abcd',
+  maxZoom: 19
+}).addTo(map);
+
+// Click on empty map area = deselect
+map.on('click', () => {
+  if (selectedLocation) {
+    selectLocation(null);
+  }
+});
+
+// ============================================================
+// Global state
+// ============================================================
+let allRoutes = [];
+let locations = []; // grouped locations
+let markers = [];
+let selectedLocation = null;
+let viewMode = 'departures';
+let activeFilters = new Set(['hertz', 'driveback', 'movacar']);
+let lineLayer = L.layerGroup().addTo(map);
+
+// ============================================================
+// Filter logic
+// ============================================================
+function getFilteredRoutes() {
+  return allRoutes.filter(r => activeFilters.has(r.source));
+}
+
+function renderFilters() {
+  const el = document.getElementById('filters');
+  const sources = ['hertz', 'driveback', 'movacar'];
+  const labels = { hertz: 'Hertz', driveback: 'DriveBack', movacar: 'Movacar' };
+  const allActive = sources.every(s => activeFilters.has(s));
+
+  let html = `<button class="filter-btn ${allActive ? 'active' : ''}" onclick="toggleFilter('all')">Alle</button>`;
+  for (const s of sources) {
+    html += `<button class="filter-btn ${activeFilters.has(s) ? 'active' : ''}" onclick="toggleFilter('${s}')">${labels[s]}</button>`;
+  }
+  el.innerHTML = html;
+}
+
+function toggleFilter(source) {
+  const sources = ['hertz', 'driveback', 'movacar'];
+  if (source === 'all') {
+    activeFilters = new Set(sources);
+  } else {
+    const allActive = sources.every(s => activeFilters.has(s));
+    if (allActive) {
+      // Switch to only this source
+      activeFilters = new Set([source]);
+    } else if (activeFilters.has(source)) {
+      // Remove it, but only if others exist
+      if (activeFilters.size > 1) {
+        activeFilters.delete(source);
+      }
+    } else {
+      activeFilters.add(source);
+    }
+  }
+  refreshView();
+}
+
+// ============================================================
+// Location selection
+// ============================================================
+function selectLocation(loc) {
+  // Reset previous selected marker
+  if (selectedLocation && selectedLocation._marker) {
+    selectedLocation._marker.setStyle({ fillColor: '#e94560' });
+    selectedLocation._marker.setRadius(Math.min(6 + countRoutesForLocation(selectedLocation), 18));
+  }
+  selectedLocation = loc;
+  viewMode = 'departures';
+  if (loc && loc._marker) {
+    loc._marker.setStyle({ fillColor: '#ffd700' });
+    loc._marker.bringToFront();
+  }
+  refreshView();
+}
+
+// ============================================================
+// Toggle bar (departures / arrivals)
+// ============================================================
+function renderToggle() {
+  const el = document.getElementById('toggle-bar');
+  const filtered = getFilteredRoutes();
+
+  let depCount, arrCount;
+  if (selectedLocation) {
+    depCount = filtered.filter(r => r.from && !isNaN(r.from.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.from.lat, r.from.lon) < 10).length;
+    arrCount = filtered.filter(r => r.to && !isNaN(r.to.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.to.lat, r.to.lon) < 10).length;
+  } else {
+    // Count unique departure/arrival locations
+    const depLocs = new Set();
+    const arrLocs = new Set();
+    for (const r of filtered) {
+      if (r.from && !isNaN(r.from.lat)) depLocs.add(`${r.from.lat.toFixed(1)},${r.from.lon.toFixed(1)}`);
+      if (r.to && !isNaN(r.to.lat)) arrLocs.add(`${r.to.lat.toFixed(1)},${r.to.lon.toFixed(1)}`);
+    }
+    depCount = depLocs.size;
+    arrCount = arrLocs.size;
+  }
+
+  el.innerHTML = `
+    <button class="toggle-btn departures ${viewMode === 'departures' ? 'active' : ''}" onclick="setViewMode('departures')">Abfahrten (${depCount})</button>
+    <button class="toggle-btn arrivals ${viewMode === 'arrivals' ? 'active' : ''}" onclick="setViewMode('arrivals')">Ank\u00fcnfte (${arrCount})</button>
+  `;
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  refreshView();
+}
+
+// ============================================================
+// Selected info
+// ============================================================
+function renderSelectedInfo() {
+  const el = document.getElementById('selected-info');
+  if (!selectedLocation) {
+    el.innerHTML = '<p class="hint">Klick auf einen Punkt um Routen zu sehen</p>';
+    return;
+  }
+  const filtered = getFilteredRoutes();
+  const depCount = filtered.filter(r => r.from && !isNaN(r.from.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.from.lat, r.from.lon) < 10).length;
+  const arrCount = filtered.filter(r => r.to && !isNaN(r.to.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.to.lat, r.to.lon) < 10).length;
+
+  el.innerHTML = `
+    <div class="location-name">${selectedLocation.name}</div>
+    <div class="location-meta">${depCount} Abfahrten \u2022 ${arrCount} Ank\u00fcnfte</div>
+  `;
+}
+
+// ============================================================
+// Route lines
+// ============================================================
+function getMatchingRoutes() {
+  if (!selectedLocation) return [];
+  const filtered = getFilteredRoutes();
+  if (viewMode === 'departures') {
+    return filtered.filter(r => r.from && !isNaN(r.from.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.from.lat, r.from.lon) < 10);
+  } else {
+    return filtered.filter(r => r.to && !isNaN(r.to.lat) && haversine(selectedLocation.lat, selectedLocation.lon, r.to.lat, r.to.lon) < 10);
+  }
+}
+
+function drawRouteLines() {
+  lineLayer.clearLayers();
+  if (!selectedLocation) return;
+  const routes = getMatchingRoutes();
+  const color = viewMode === 'departures' ? '#e94560' : '#4CAF50';
+
+  for (const r of routes) {
+    if (!r.from || !r.to || isNaN(r.from.lat) || isNaN(r.to.lat)) continue;
+    const line = L.polyline(
+      [[r.from.lat, r.from.lon], [r.to.lat, r.to.lon]],
+      { color, weight: 2, opacity: 0.6, dashArray: '6,4' }
+    ).addTo(lineLayer);
+    line._routeId = r.id;
+  }
+}
+
+// ============================================================
+// Route list
+// ============================================================
+function renderRouteList() {
+  const el = document.getElementById('route-list');
+  if (!selectedLocation) {
+    el.innerHTML = '<p class="hint">W\u00e4hle einen Standort auf der Karte</p>';
+    return;
+  }
+  const routes = getMatchingRoutes();
+  routes.sort((a, b) => (a.availableFrom || '').localeCompare(b.availableFrom || ''));
+
+  if (routes.length === 0) {
+    el.innerHTML = '<p class="hint">Keine Routen f\u00fcr aktive Filter</p>';
+    return;
+  }
+
+  el.innerHTML = routes.map(r => {
+    const dateStr = r.availableFrom ? new Date(r.availableFrom).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '—';
+    const dist = r.distance ? `${r.distance} km` : '';
+    return `<div class="route-card" onmouseenter="highlightLine('${r.id}')" onmouseleave="unhighlightLine('${r.id}')">
+      <div class="route-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="route-cities">${r.from.name} <span class="arrow" style="color:#e94560;">\u2192</span> ${r.to.name}</span>
+        <span class="source-badge ${r.source}">${r.source}</span>
+      </div>
+      <div class="route-details">
+        <span>${r.vehicle || ''}</span>
+        <span>Ab: ${dateStr}</span>
+        ${dist ? `<span>${dist}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// Hover highlight
+// ============================================================
+function highlightLine(routeId) {
+  lineLayer.eachLayer(layer => {
+    if (layer._routeId === routeId) {
+      layer.setStyle({ weight: 4, opacity: 1 });
+      layer.bringToFront();
+    }
+  });
+}
+
+function unhighlightLine(routeId) {
+  lineLayer.eachLayer(layer => {
+    if (layer._routeId === routeId) {
+      layer.setStyle({ weight: 2, opacity: 0.6 });
+    }
+  });
+}
+
+// ============================================================
+// Marker visibility
+// ============================================================
+function updateMarkerVisibility() {
+  const filtered = getFilteredRoutes();
+
+  // When a location is selected, find which locations are connected
+  let connectedLocs = null;
+  if (selectedLocation) {
+    connectedLocs = new Set();
+    const matching = getMatchingRoutes();
+    for (const r of matching) {
+      const target = viewMode === 'departures' ? r.to : r.from;
+      if (target && !isNaN(target.lat)) {
+        for (const loc of locations) {
+          if (haversine(loc.lat, loc.lon, target.lat, target.lon) < 10) {
+            connectedLocs.add(loc);
+          }
+        }
+      }
+    }
+  }
+
+  for (const loc of locations) {
+    if (!loc._marker) continue;
+
+    let visible;
+    if (selectedLocation) {
+      // Only show selected + connected locations
+      visible = loc === selectedLocation || connectedLocs.has(loc);
+    } else {
+      // No selection: show only locations matching viewMode
+      if (viewMode === 'departures') {
+        visible = filtered.some(r => r.from && !isNaN(r.from.lat) && haversine(loc.lat, loc.lon, r.from.lat, r.from.lon) < 10);
+      } else {
+        visible = filtered.some(r => r.to && !isNaN(r.to.lat) && haversine(loc.lat, loc.lon, r.to.lat, r.to.lon) < 10);
+      }
+    }
+
+    if (visible) {
+      if (!map.hasLayer(loc._marker)) map.addLayer(loc._marker);
+    } else {
+      if (map.hasLayer(loc._marker)) map.removeLayer(loc._marker);
+    }
+  }
+}
+
+// ============================================================
+// Refresh view
+// ============================================================
+function refreshView() {
+  renderFilters();
+  renderToggle();
+  renderSelectedInfo();
+  renderRouteList();
+  drawRouteLines();
+  updateMarkerVisibility();
+}
+
+// ============================================================
+// Haversine distance (km)
+// ============================================================
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ============================================================
+// Data fetching: Hertz
+// ============================================================
+function parseHertzData(data) {
+  const routes = [];
+  for (const group of data) {
+    if (!group.routes) continue;
+    for (const r of group.routes) {
+      routes.push({
+        source: 'hertz',
+        id: 'hertz-' + (r.id || routes.length),
+        from: {
+          name: r.pickupLocation?.city || r.pickupLocation?.name || 'Unknown',
+          lat: parseFloat(r.pickupLocation?.geoLat),
+          lon: parseFloat(r.pickupLocation?.geoLon)
+        },
+        to: {
+          name: r.returnLocation?.city || r.returnLocation?.name || 'Unknown',
+          lat: parseFloat(r.returnLocation?.geoLat),
+          lon: parseFloat(r.returnLocation?.geoLon)
+        },
+        vehicle: r.carModel || '',
+        availableFrom: r.availableAt || null,
+        availableUntil: r.latestReturn || null,
+        distance: r.distance || null,
+        freeKm: null
+      });
+    }
+  }
+  return routes;
+}
+
+async function fetchHertz() {
+  // Hertz API has no CORS headers — load from local JSON (created by update-data.sh)
+  try {
+    const res = await fetch('hertz-data.json?t=' + Date.now());
+    const data = await res.json();
+    if (Array.isArray(data) && data[0]?.source === 'hertz') return data;
+    return parseHertzData(data);
+  } catch (e) {
+    console.warn('Hertz: hertz-data.json nicht gefunden. Bitte ./update-data.sh ausführen.', e.message);
+    return [];
+  }
+}
+
+// ============================================================
+// Data fetching: DriveBack
+// ============================================================
+async function fetchDriveBack() {
+  const res = await fetch('https://www.driveback.se/resor');
+  const data = await res.json();
+  return data.map((r, i) => ({
+    source: 'driveback',
+    id: 'driveback-' + (r.id || i),
+    from: {
+      name: r.from_station?.area || r.from_station?.location?.city || 'Unknown',
+      lat: parseFloat(r.from_station?.location?.latitude),
+      lon: parseFloat(r.from_station?.location?.longitude)
+    },
+    to: {
+      name: r.to_stations?.[0]?.area || r.to_stations?.[0]?.location?.city || 'Unknown',
+      lat: parseFloat(r.to_stations?.[0]?.location?.latitude),
+      lon: parseFloat(r.to_stations?.[0]?.location?.longitude)
+    },
+    vehicle: r.vehicle?.car_model || '',
+    availableFrom: r.first_pickup || null,
+    availableUntil: r.last_deliver || null,
+    distance: null,
+    freeKm: null
+  }));
+}
+
+// ============================================================
+// Data fetching: Movacar
+// ============================================================
+async function fetchMovacar() {
+  // Movacar data loaded from local JSON (created by update-data.sh) — much faster than 23 API calls
+  try {
+    const res = await fetch('movacar-data.json?t=' + Date.now());
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+    return [];
+  } catch (e) {
+    console.warn('Movacar: movacar-data.json nicht gefunden. Bitte ./update-data.sh ausführen.', e.message);
+    return [];
+  }
+}
+
+// ============================================================
+// Load all routes in parallel
+// ============================================================
+async function loadAllRoutes() {
+  const statusEl = document.getElementById('loading-status');
+
+  statusEl.textContent = 'Lade Hertz, DriveBack, Movacar...';
+
+  const results = await Promise.allSettled([
+    fetchHertz(),
+    fetchDriveBack(),
+    fetchMovacar()
+  ]);
+
+  const sourceNames = ['Hertz', 'DriveBack', 'Movacar'];
+  const combined = [];
+
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled') {
+      console.log(`${sourceNames[i]}: ${result.value.length} routes`);
+      combined.push(...result.value);
+    } else {
+      console.error(`${sourceNames[i]} failed:`, result.reason);
+    }
+  });
+
+  allRoutes = combined;
+  return combined;
+}
+
+// ============================================================
+// Location grouping
+// ============================================================
+function groupLocations() {
+  const THRESHOLD_KM = 10;
+  const raw = [];
+
+  // Extract all unique locations from routes
+  for (const route of allRoutes) {
+    for (const endpoint of [route.from, route.to]) {
+      if (!endpoint || isNaN(endpoint.lat) || isNaN(endpoint.lon)) continue;
+      raw.push({ lat: endpoint.lat, lon: endpoint.lon, name: endpoint.name });
+    }
+  }
+
+  // Group within threshold
+  const groups = [];
+  const used = new Set();
+
+  for (let i = 0; i < raw.length; i++) {
+    if (used.has(i)) continue;
+    const group = [raw[i]];
+    used.add(i);
+
+    for (let j = i + 1; j < raw.length; j++) {
+      if (used.has(j)) continue;
+      if (haversine(raw[i].lat, raw[i].lon, raw[j].lat, raw[j].lon) < THRESHOLD_KM) {
+        group.push(raw[j]);
+        used.add(j);
+      }
+    }
+
+    // Average position, collect unique names
+    const lat = group.reduce((s, g) => s + g.lat, 0) / group.length;
+    const lon = group.reduce((s, g) => s + g.lon, 0) / group.length;
+    const names = [...new Set(group.map(g => g.name))];
+
+    groups.push({
+      lat, lon,
+      name: names[0],
+      names,
+      _marker: null
+    });
+  }
+
+  locations = groups;
+  return groups;
+}
+
+// ============================================================
+// Count routes for a location
+// ============================================================
+function countRoutesForLocation(loc) {
+  const THRESHOLD_KM = 10;
+  let count = 0;
+  for (const route of allRoutes) {
+    for (const endpoint of [route.from, route.to]) {
+      if (!endpoint || isNaN(endpoint.lat) || isNaN(endpoint.lon)) continue;
+      if (haversine(loc.lat, loc.lon, endpoint.lat, endpoint.lon) < THRESHOLD_KM) {
+        count++;
+        break; // count each route once per location
+      }
+    }
+  }
+  return count;
+}
+
+// ============================================================
+// Render markers
+// ============================================================
+function renderMarkers() {
+  // Remove existing markers
+  for (const m of markers) {
+    map.removeLayer(m);
+  }
+  markers = [];
+
+  for (const loc of locations) {
+    const routeCount = countRoutesForLocation(loc);
+    const radius = Math.min(6 + routeCount, 18);
+
+    const marker = L.circleMarker([loc.lat, loc.lon], {
+      radius,
+      fillColor: '#e94560',
+      fillOpacity: 0.8,
+      color: '#fff',
+      weight: 1.5
+    }).addTo(map);
+
+    marker.bindTooltip(loc.name, { direction: 'top', offset: [0, -8] });
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      selectLocation(loc);
+    });
+
+    loc._marker = marker;
+    markers.push(marker);
+  }
+}
+
+// ============================================================
+// Update source badges
+// ============================================================
+function updateSourceBadges() {
+  const counts = { hertz: 0, driveback: 0, movacar: 0 };
+  for (const r of allRoutes) {
+    if (counts[r.source] !== undefined) counts[r.source]++;
+  }
+
+  const el = document.getElementById('source-badges');
+  el.innerHTML = [
+    { key: 'hertz', label: 'Hertz' },
+    { key: 'driveback', label: 'DriveBack' },
+    { key: 'movacar', label: 'Movacar' }
+  ].map(s =>
+    `<span class="source-badge ${s.key}">${s.label} <span class="count">${counts[s.key]}</span></span>`
+  ).join('');
+}
+
+// ============================================================
+// Refresh all data from APIs
+// ============================================================
+let refreshTimer = null;
+const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+async function refreshData(showOverlay = false) {
+  if (showOverlay) {
+    document.getElementById('loading-overlay').classList.remove('hidden');
+  }
+  document.getElementById('refresh-btn').classList.add('spinning');
+
+  try {
+    const prevSelected = selectedLocation?.name || null;
+    await loadAllRoutes();
+    groupLocations();
+    renderMarkers();
+    updateSourceBadges();
+
+    // Restore selection if the location still exists
+    if (prevSelected) {
+      const restored = locations.find(l => l.name === prevSelected);
+      if (restored) {
+        selectedLocation = restored;
+        if (restored._marker) restored._marker.setStyle({ fillColor: '#ffd700' });
+      } else {
+        selectedLocation = null;
+      }
+    }
+    refreshView();
+
+    const now = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('last-update').textContent = `Aktualisiert: ${now}`;
+  } catch (e) {
+    console.error('Refresh error:', e);
+  } finally {
+    document.getElementById('loading-overlay').classList.add('hidden');
+    document.getElementById('refresh-btn').classList.remove('spinning');
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => refreshData(false), REFRESH_INTERVAL);
+}
+
+// ============================================================
+// Init
+// ============================================================
+(async function init() {
+  await refreshData(true);
+  startAutoRefresh();
+})();
+</script>
+</body>
+</html>

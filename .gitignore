@@ -1,0 +1,22 @@
+# Output-Snapshots der Monitor-Skripte (groß, nicht versioniert)
+hertz-data.json
+movacar-data.json
+
+# State-Persistierung (lokal + GitHub-Actions-State separat unter state/)
+state/
+.cache/
+
+# Secrets — niemals committen
+.env
+.env.local
+.env.*.local
+*.secret
+*.credentials
+
+# Lokale Claude-Code-Settings
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
