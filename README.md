@@ -35,9 +35,13 @@ Lokal:
 ./freerider-monitor.sh 60        # Loop mit 1-Min-Intervall
 ```
 
-GitHub Actions: Workflow läuft alle 10 min (`*/10 * * * *`),
-State-File liegt in `state/known-ids.txt` und wird vom Workflow zurück-
-committed. Logs: GitHub-Actions-Tab.
+GitHub Actions: Workflow läuft alle 5 min (`*/5 * * * *`).
+State-Files liegen im privaten Schwester-Repo
+[hallohand/freerider-monitor-state](https://github.com/hallohand/freerider-monitor-state)
+(Files: `state/known-ids.txt`, `state/last-update-id.txt`,
+`state/filters.json`). Workflow checkout't beide Repos und
+committet Änderungen ins State-Repo zurück.
+Logs: GitHub-Actions-Tab dieses Repos.
 
 ## Secrets (nur in GitHub Actions / `.env.local`)
 
@@ -46,6 +50,10 @@ committed. Logs: GitHub-Actions-Tab.
   `https://api.telegram.org/bot<TOKEN>/getUpdates` ablesen
   (Feld `result[].message.chat.id` — User-IDs sind 9–10-stellig
   positiv, nicht mit der Bot-User-ID verwechseln)
+- `STATE_REPO_TOKEN` (nur GitHub Actions) — fine-grained PAT mit
+  Scope „nur `freerider-monitor-state`, Contents: read+write".
+  Nicht in `.env.local` nötig (lokal wird kein State ins Schwester-
+  Repo geschrieben).
 
 `.env.local` ist gitignored. Format:
 
@@ -54,7 +62,24 @@ TELEGRAM_KEY=<bot-token-from-botfather>
 CHAT_ID=<numeric-user-id>
 ```
 
+## Setup für neuen User
+
+1. Beide Repos forken/klonen: `freerider-monitor` (public, Code) und
+   `freerider-monitor-state` (privat, Daten).
+2. Telegram-Bot via `@BotFather` anlegen, Token notieren, einmal an
+   den Bot schreiben, Chat-ID via `getUpdates` auslesen.
+3. Fine-grained PAT auf `freerider-monitor-state` (Contents: write).
+4. In GitHub-Actions des Eltern-Repos drei Secrets setzen:
+   `TELEGRAM_KEY`, `CHAT_ID`, `STATE_REPO_TOKEN`.
+5. Workflow läuft beim nächsten Cron-Tick automatisch.
+
 ## Bot-Token rotieren
 
 `@BotFather` → `/revoke` → neuen Token in GitHub-Secrets eintragen
 (`Settings → Secrets and variables → Actions`). Kein Code-Change nötig.
+
+## PAT rotieren
+
+`Settings → Personal access tokens → freerider-monitor-state-write`
+→ Regenerate → neuen Wert in GitHub-Secrets eintragen
+(`STATE_REPO_TOKEN`).
