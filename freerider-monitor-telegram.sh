@@ -262,6 +262,39 @@ Backstop aktiv: alle neuen Routen werden gepusht."
 }
 
 # ---------------------------------------------------------------------------
+# Filter-Match-Logik (jq-basiert, OR über Filter, AND innerhalb)
+# ---------------------------------------------------------------------------
+
+# Returns 0 (match → push) oder 1 (kein match → still).
+# Args: from_city_raw, to_city_raw, pickup_iso, deliver_iso
+match_filters() {
+    local from to pickup deliver
+    from=$(normalize_city "$1")
+    to=$(normalize_city "$2")
+    pickup="${3:0:10}"   # YYYY-MM-DD aus ISO-String
+    deliver="${4:0:10}"
+
+    ensure_filters_file
+
+    local result
+    result=$(jq --arg from "$from" --arg to "$to" \
+                --arg pickup "$pickup" --arg deliver "$deliver" '
+        if length == 0 then true
+        else
+            any(.[];
+                (.from_cities | length == 0 or any(.[]; . == $from)) and
+                (.to_cities   | length == 0 or any(.[]; . == $to)) and
+                (.pickup_after   == null or $pickup  >= .pickup_after)  and
+                (.pickup_before  == null or $pickup  <= .pickup_before) and
+                (.deliver_before == null or $deliver <= .deliver_before)
+            )
+        end
+    ' "$FILTERS_FILE")
+
+    [ "$result" = "true" ]
+}
+
+# ---------------------------------------------------------------------------
 # Update-Verarbeitung
 # ---------------------------------------------------------------------------
 
@@ -351,26 +384,32 @@ check_hertz() {
     local new_lines=""
     local new_count=0
 
-    while IFS='|' read -r id pickup_city return_city car_model available_at; do
+    local new_in_state=0
+    local matched=0
+
+    while IFS='|' read -r id pickup_city return_city car_model available_at latest_return; do
         [ -z "$id" ] && continue
         local state_id="hertz-$id"
         if ! grep -qxF "$state_id" "$STATE_FILE"; then
             echo "$state_id" >> "$STATE_FILE"
-            new_count=$((new_count + 1))
-            new_lines+="• ${pickup_city} → ${return_city}"$'\n'"  ${car_model} | ab ${available_at}"$'\n\n'
+            new_in_state=$((new_in_state + 1))
+            if match_filters "$pickup_city" "$return_city" "$available_at" "$latest_return"; then
+                matched=$((matched + 1))
+                new_lines+="• ${pickup_city} → ${return_city}"$'\n'"  ${car_model} | ab ${available_at:0:10} | bis ${latest_return:0:10}"$'\n\n'
+            fi
         fi
     done < <(echo "$response" | jq -r '
         .[].routes[] |
-        "\(.id)|\(.pickupLocation.city // .pickupLocation.name)|\(.returnLocation.city // .returnLocation.name)|\(.carModel)|\(.availableAt)"
+        "\(.id)|\(.pickupLocation.city // .pickupLocation.name)|\(.returnLocation.city // .returnLocation.name)|\(.carModel)|\(.availableAt)|\(.latestReturn // "")"
     ')
 
     local total
     total=$(echo "$response" | jq '[.[].routes | length] | add // 0')
 
-    if [ "$new_count" -gt 0 ] && [ "$SILENT_INIT" = false ]; then
-        notify_telegram "🚗 Hertz Freerider — ${new_count} neue Route(n)"$'\n\n'"${new_lines}"
+    if [ "$matched" -gt 0 ] && [ "$SILENT_INIT" = false ]; then
+        notify_telegram "🚗 Hertz Freerider — ${matched} neue Route(n)"$'\n\n'"${new_lines}"
     fi
-    echo "[Hertz] ${total} aktiv, ${new_count} neu"
+    echo "[Hertz] ${total} aktiv, ${new_in_state} neu, ${matched} match"
 }
 
 check_driveback() {
@@ -383,27 +422,34 @@ check_driveback() {
     local new_lines=""
     local new_count=0
 
-    while IFS='|' read -r id from_area from_city to_area to_city car_model first_pickup; do
+    local new_in_state=0
+    local matched=0
+
+    while IFS='|' read -r id from_area from_city to_area to_city car_model first_pickup last_deliver; do
         [ -z "$id" ] && continue
         local state_id="driveback-$id"
         if ! grep -qxF "$state_id" "$STATE_FILE"; then
             echo "$state_id" >> "$STATE_FILE"
-            new_count=$((new_count + 1))
-            local pickup_date="${first_pickup%%T*}"
-            new_lines+="• ${from_area} (${from_city}) → ${to_area} (${to_city})"$'\n'"  ${car_model} | ab ${pickup_date}"$'\n\n'
+            new_in_state=$((new_in_state + 1))
+            if match_filters "$from_city" "$to_city" "$first_pickup" "$last_deliver"; then
+                matched=$((matched + 1))
+                local pickup_date="${first_pickup%%T*}"
+                local deliver_date="${last_deliver%%T*}"
+                new_lines+="• ${from_area} (${from_city}) → ${to_area} (${to_city})"$'\n'"  ${car_model} | ab ${pickup_date} | bis ${deliver_date}"$'\n\n'
+            fi
         fi
     done < <(echo "$response" | jq -r '
         .[] |
-        "\(.id)|\(.from_station.area)|\(.from_station.location.city)|\(.to_stations[0].area)|\(.to_stations[0].location.city)|\(.vehicle.car_model)|\(.first_pickup)"
+        "\(.id)|\(.from_station.area)|\(.from_station.location.city)|\(.to_stations[0].area)|\(.to_stations[0].location.city)|\(.vehicle.car_model)|\(.first_pickup)|\(.last_deliver // "")"
     ')
 
     local total
     total=$(echo "$response" | jq 'length')
 
-    if [ "$new_count" -gt 0 ] && [ "$SILENT_INIT" = false ]; then
-        notify_telegram "🚗 DriveBack — ${new_count} neue Rückführung(en)"$'\n\n'"${new_lines}"
+    if [ "$matched" -gt 0 ] && [ "$SILENT_INIT" = false ]; then
+        notify_telegram "🚗 DriveBack — ${matched} neue Rückführung(en)"$'\n\n'"${new_lines}"
     fi
-    echo "[DriveBack] ${total} aktiv, ${new_count} neu"
+    echo "[DriveBack] ${total} aktiv, ${new_in_state} neu, ${matched} match"
 }
 
 # ---------------------------------------------------------------------------
