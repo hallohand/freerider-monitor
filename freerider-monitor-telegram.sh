@@ -14,15 +14,14 @@
 #   FILTERS_FILE         — Default state/filters.json
 #   WHITELIST_CHAT_IDS   — kommagetrennte Liste, Default = CHAT_ID
 #
-# Ablauf:
-#   1. process_updates  — getUpdates pollen, Whitelist filtern,
-#                         Commands (/start, /help) abarbeiten
-#   2. check_hertz      — Hertz-Routen-Diff + Push bei neuen IDs
-#   3. check_driveback  — DriveBack-Diff + Push bei neuen IDs
+# Modi (per Argument):
+#   (default)       — One-Shot: erst Bot-Commands abarbeiten, dann scrapen
+#   --bot-loop      — Daemon: Long-Polling getUpdates (30s timeout), reagiert
+#                     binnen <1s auf neue Commands. Kein Scrape.
+#   --scrape-only   — Nur Source-Scrape + Push, keine Bot-Commands
 #
 # State-Files werden im aufrufenden Verzeichnis bzw. relativ zu
-# STATE_FILE/LAST_UPDATE_FILE erwartet. Im CI liegen sie im
-# parallel ausgechecktem state-repo.
+# STATE_FILE/LAST_UPDATE_FILE erwartet.
 
 set -euo pipefail
 
@@ -267,14 +266,17 @@ Backstop aktiv: alle neuen Routen werden gepusht."
 # ---------------------------------------------------------------------------
 
 process_updates() {
+    local poll_timeout="${1:-0}"
     local offset=0
     if [ -f "$LAST_UPDATE_FILE" ] && [ -s "$LAST_UPDATE_FILE" ]; then
         offset=$(($(cat "$LAST_UPDATE_FILE") + 1))
     fi
 
+    # curl-max-time = poll_timeout + 5s Buffer
+    local curl_timeout=$((poll_timeout + 5))
     local response
-    response=$(curl -s --max-time 15 \
-        "https://api.telegram.org/bot${TELEGRAM_KEY}/getUpdates?offset=${offset}&timeout=0") || {
+    response=$(curl -s --max-time "$curl_timeout" \
+        "https://api.telegram.org/bot${TELEGRAM_KEY}/getUpdates?offset=${offset}&timeout=${poll_timeout}") || {
         echo "[Bot] getUpdates-Fehler"
         return 0
     }
@@ -408,8 +410,25 @@ check_driveback() {
 # Hauptablauf
 # ---------------------------------------------------------------------------
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] One-Shot-Lauf. Silent-Init=${SILENT_INIT}."
-process_updates || true
-check_hertz || true
-check_driveback || true
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fertig."
+case "${1:-}" in
+    --bot-loop)
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot-Loop gestartet (Long-Polling, 30s timeout)."
+        while true; do
+            process_updates 30 || echo "[Bot] iter-fail, weiter in 5s"
+            sleep 1
+        done
+        ;;
+    --scrape-only)
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Scrape-Lauf. Silent-Init=${SILENT_INIT}."
+        check_hertz || true
+        check_driveback || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fertig."
+        ;;
+    *)
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] One-Shot-Lauf. Silent-Init=${SILENT_INIT}."
+        process_updates 0 || true
+        check_hertz || true
+        check_driveback || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Fertig."
+        ;;
+esac
