@@ -1,35 +1,34 @@
 #!/usr/bin/env bash
 #
-# Freerider Monitor — One-Shot mit Telegram-Push und Command-Receive.
-# Designed für GitHub Actions Cron (kein Loop, kein Desktop-Notify).
-# Quellen: Hertz Freerider + DriveBack. Movacar deaktiviert.
-#
-# Env (Pflicht):
-#   TELEGRAM_KEY         — Bot-Token von @BotFather
-#   CHAT_ID              — Default-Chat-ID für Push-Notifications
-#
-# Env (optional):
-#   STATE_FILE           — Default state/known-ids.txt
-#   LAST_UPDATE_FILE     — Default state/last-update-id.txt
-#   FILTERS_FILE         — Default state/filters.json
-#   WHITELIST_CHAT_IDS   — kommagetrennte Liste, Default = CHAT_ID
+# Freerider Monitor — Telegram-Bot + Source-Scraper.
+# Quellen: Hertz Freerider + DriveBack. Movacar-Skripte sind im
+# Repo deaktiviert (siehe README).
 #
 # Modi (per Argument):
-#   (default)       — One-Shot: erst Bot-Commands abarbeiten, dann scrapen
-#   --bot-loop      — Daemon: Long-Polling getUpdates (30s timeout), reagiert
-#                     binnen <1s auf neue Commands. Kein Scrape.
-#   --scrape-only   — Nur Source-Scrape + Push, keine Bot-Commands
+#   --bot-loop      Daemon: Long-Polling getUpdates (30 s timeout),
+#                   reagiert <1 s auf neue Commands. Kein Scrape.
+#   --scrape-only   Nur Source-Scrape + Push, keine Bot-Commands.
+#   (default)       One-Shot: erst Commands, dann Scrape.
 #
-# State-Files werden im aufrufenden Verzeichnis bzw. relativ zu
-# STATE_FILE/LAST_UPDATE_FILE erwartet.
+# Env (Pflicht):
+#   TELEGRAM_KEY         Bot-Token von @BotFather
+#   CHAT_ID              Default-Chat-ID für Push-Notifications
+#
+# Env (optional, Override für lokalen Test):
+#   STATE_FILE           Default /var/lib/freerider/state/known-ids.txt
+#   LAST_UPDATE_FILE     Default /var/lib/freerider/state/last-update-id.txt
+#   FILTERS_FILE         Default /var/lib/freerider/state/filters.json
+#   WHITELIST_CHAT_IDS   kommagetrennte Liste, Default = CHAT_ID
+#
+# Auf einem VPS via systemd-Unit gestartet (siehe README).
 
 set -euo pipefail
 
 HERTZ_API="https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN"
 DRIVEBACK_URL="https://www.driveback.se/resor"
-STATE_FILE="${STATE_FILE:-state/known-ids.txt}"
-LAST_UPDATE_FILE="${LAST_UPDATE_FILE:-state/last-update-id.txt}"
-FILTERS_FILE="${FILTERS_FILE:-state/filters.json}"
+STATE_FILE="${STATE_FILE:-/var/lib/freerider/state/known-ids.txt}"
+LAST_UPDATE_FILE="${LAST_UPDATE_FILE:-/var/lib/freerider/state/last-update-id.txt}"
+FILTERS_FILE="${FILTERS_FILE:-/var/lib/freerider/state/filters.json}"
 
 # Lokal: .env.local laden falls vorhanden. CI: Vars sind schon im Env.
 if [ -f .env.local ] && [ -z "${TELEGRAM_KEY:-}" ]; then

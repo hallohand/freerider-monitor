@@ -1,89 +1,84 @@
-# hertz — Mietwagen-Rückführungs-Monitor
+# freerider-monitor
 
-Monitort drei Quellen für kostenlose/günstige Mietwagen-Rückführungen
-(Freerider) und benachrichtigt bei neuen Routen.
+Telegram-Bot für Hertz Freerider + DriveBack Routen-Tracking.
+Push für neue Mietwagen-Rückführungen, persistente Filter,
+On-Demand-Suche.
 
 ## Quellen
 
-| Quelle              | Endpoint                                                                                | Format     | Status        |
-|---------------------|-----------------------------------------------------------------------------------------|------------|---------------|
-| Hertz Freerider     | `https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN`                     | JSON-Array | aktiv         |
-| DriveBack           | `https://www.driveback.se/resor`                                                         | JSON-Array | aktiv         |
-| Movacar             | `https://crowd-api-production-615013621295.europe-west1.run.app/v1/{locations,offers}`   | JSON:API   | **deaktiviert (Stand 2026-05-05)** |
+| Quelle              | Endpoint                                                                                | Status        |
+|---------------------|------------------------------------------------------------------------------------------|---------------|
+| Hertz Freerider     | `https://www.hertzfreerider.se/api/transport-routes/?country=SWEDEN`                     | aktiv         |
+| DriveBack           | `https://www.driveback.se/resor`                                                         | aktiv         |
+| Movacar             | `crowd-api-production-…run.app/v1/{locations,offers}`                                    | deaktiviert   |
 
-**Movacar deaktiviert:** Eigentümer-Entscheidung 2026-05-05. Skript
-`movacar-scrape.py` und Daten-Snapshots bleiben im Repo (sunk cost,
-reaktivierbar), werden aber nicht mehr im 24/7-Workflow ausgeführt.
+`movacar-scrape.py` und Snapshots bleiben im Repo, laufen aber
+nicht im Service.
 
-## Skripte
+## Bot-Commands
 
-- `freerider-monitor.sh [INTERVAL]` — lokaler Endlos-Loop mit Desktop-
-  Notifications (notify-send + paplay), prüft Hertz Freerider +
-  DriveBack. Default-Intervall 300 s.
-- `freerider-monitor-telegram.sh` — One-shot-Variante für GitHub-Actions-
-  Cron, sendet Treffer per Telegram (siehe `.github/workflows/`).
-- `update-data.sh` — manuelle Snapshot-Updates der aktiven Quellen.
-- `movacar-scrape.py` / `update-movacar.sh` — *deaktiviert.* Bleibt im
-  Repo, läuft aber nicht im 24/7-Workflow.
-- `start-map.sh` + `map.html` — visualisiert Snapshots auf Karte.
+```
+/start         Begrüßung
+/help          Command-Übersicht
+/filters       aktive Filter zeigen
+/addfilter     Filter anlegen oder überschreiben
+/removefilter  Filter mit Namen löschen
+/clear         alle Filter löschen
+/search        Live-Suche, gleiche Syntax wie /addfilter ohne name
+```
 
-## Lauf-Anleitung
+Filter-Syntax (alle Felder außer `name` optional, Reihenfolge egal):
 
-Lokal:
+```
+/addfilter <name> from=A,B to=C,D pickup_after=YYYY-MM-DD pickup_before=YYYY-MM-DD deliver_before=YYYY-MM-DD
+```
+
+Stadtnamen sind case-insensitive und Diakritika-tolerant
+(`Skellefteå` ≡ `skelleftea`). Match: AND innerhalb Filter, OR über
+Filter. Ohne Filter werden alle neuen Routen gepusht (Backstop).
+
+## Setup (auf einem VPS)
+
 ```bash
-./freerider-monitor.sh           # Loop mit 5-Min-Intervall
-./freerider-monitor.sh 60        # Loop mit 1-Min-Intervall
-```
+adduser --system --no-create-home --group --shell /usr/sbin/nologin freerider
+mkdir -p /opt/freerider /var/lib/freerider/state /etc/freerider
+chown -R freerider:freerider /var/lib/freerider
+git clone https://github.com/hallohand/freerider-monitor.git /opt/freerider/freerider-monitor
 
-GitHub Actions: Workflow startet alle 5 min (`*/5 * * * *`) und
-läuft pro Run ~4 min lang in einem inneren Loop, der das Skript
-5×/Min mit 60-s-Pausen aufruft. Damit reagiert der Bot praktisch
-jede Minute, ohne auf GH's unzuverlässige minütige Schedules
-angewiesen zu sein. Echte Bot-Reply-Latenz: 0–60 s.
-State-Files liegen im privaten Schwester-Repo
-[hallohand/freerider-monitor-state](https://github.com/hallohand/freerider-monitor-state)
-(Files: `state/known-ids.txt`, `state/last-update-id.txt`,
-`state/filters.json`). Workflow checkout't beide Repos und
-committet Änderungen ins State-Repo zurück.
-Logs: GitHub-Actions-Tab dieses Repos.
-
-## Secrets (nur in GitHub Actions / `.env.local`)
-
-- `TELEGRAM_KEY` — Bot-Token von `@BotFather`
-- `CHAT_ID` — numerische Chat-ID, nach erstem Bot-Kontakt via
-  `https://api.telegram.org/bot<TOKEN>/getUpdates` ablesen
-  (Feld `result[].message.chat.id` — User-IDs sind 9–10-stellig
-  positiv, nicht mit der Bot-User-ID verwechseln)
-- `STATE_REPO_TOKEN` (nur GitHub Actions) — fine-grained PAT mit
-  Scope „nur `freerider-monitor-state`, Contents: read+write".
-  Nicht in `.env.local` nötig (lokal wird kein State ins Schwester-
-  Repo geschrieben).
-
-`.env.local` ist gitignored. Format:
-
-```
-TELEGRAM_KEY=<bot-token-from-botfather>
+cat >/etc/freerider/env <<EOF
+TELEGRAM_KEY=<bot-token>
 CHAT_ID=<numeric-user-id>
+EOF
+chmod 640 /etc/freerider/env && chown root:freerider /etc/freerider/env
 ```
 
-## Setup für neuen User
+Drei systemd-Units:
+- `freerider-bot.service` — Long-Polling-Daemon, `--bot-loop`,
+  Type=simple, permanent.
+- `freerider.timer` → `freerider.service` mit `--scrape-only`,
+  oneshot, alle 5 min.
+- `freerider-backup.timer` → tägliches lokales Backup von
+  `/var/lib/freerider/state/`, 30-Tage-Retention.
 
-1. Beide Repos forken/klonen: `freerider-monitor` (public, Code) und
-   `freerider-monitor-state` (privat, Daten).
-2. Telegram-Bot via `@BotFather` anlegen, Token notieren, einmal an
-   den Bot schreiben, Chat-ID via `getUpdates` auslesen.
-3. Fine-grained PAT auf `freerider-monitor-state` (Contents: write).
-4. In GitHub-Actions des Eltern-Repos drei Secrets setzen:
-   `TELEGRAM_KEY`, `CHAT_ID`, `STATE_REPO_TOKEN`.
-5. Workflow läuft beim nächsten Cron-Tick automatisch.
+Logs: `journalctl -u freerider-bot -f`.
+
+Chat-ID herausfinden: Bot in Telegram suchen → `/start` →
+`https://api.telegram.org/bot<TOKEN>/getUpdates` → `result[0].message.chat.id`.
 
 ## Bot-Token rotieren
 
-`@BotFather` → `/revoke` → neuen Token in GitHub-Secrets eintragen
-(`Settings → Secrets and variables → Actions`). Kein Code-Change nötig.
+```
+@BotFather → /revoke → @<deinbot> → neuer Token
+sudo sed -i 's/^TELEGRAM_KEY=.*/TELEGRAM_KEY=<neu>/' /etc/freerider/env
+sudo systemctl restart freerider-bot.service
+```
 
-## PAT rotieren
+## Lokal testen
 
-`Settings → Personal access tokens → freerider-monitor-state-write`
-→ Regenerate → neuen Wert in GitHub-Secrets eintragen
-(`STATE_REPO_TOKEN`).
+```bash
+STATE_FILE=./state/known-ids.txt \
+LAST_UPDATE_FILE=./state/last-update-id.txt \
+FILTERS_FILE=./state/filters.json \
+TELEGRAM_KEY=... CHAT_ID=... \
+./freerider-monitor-telegram.sh
+```

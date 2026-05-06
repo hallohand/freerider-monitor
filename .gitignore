@@ -2,9 +2,8 @@
 hertz-data.json
 movacar-data.json
 
-# State liegt jetzt im privaten Schwester-Repo
-# hallohand/freerider-monitor-state. Lokales state/-Verzeichnis ist nur
-# für Test-Läufe und gehört nicht ins Repo.
+# State liegt im VPS-Layout (/var/lib/freerider/state/) und gehört
+# nicht ins Repo. Lokales /state/-Verzeichnis ist nur für Test-Läufe.
 /state/
 .cache/
 
