@@ -138,7 +138,7 @@ cmd_help() {
 /addfilter     Filter anlegen oder überschreiben
 /removefilter  Filter mit Namen löschen
 /clear         alle Filter löschen
-/search        Live-Suche ohne Filter zu speichern (folgt)
+/search        Live-Suche, gleiche Syntax wie addfilter ohne name
 
 Filter-Syntax (alle Felder außer name optional, Reihenfolge egal):
 /addfilter <name> from=A,B to=C,D pickup_after=YYYY-MM-DD pickup_before=YYYY-MM-DD deliver_before=YYYY-MM-DD
@@ -262,6 +262,103 @@ Backstop aktiv: alle neuen Routen werden gepusht."
 }
 
 # ---------------------------------------------------------------------------
+# /search — Live-Suche ohne State-Update
+# ---------------------------------------------------------------------------
+
+cmd_search() {
+    local cid="$1"; shift
+
+    local from="" to="" pa="" pb="" db=""
+    while [ -n "${1:-}" ]; do
+        case "$1" in
+            from=*)           from="${1#from=}" ;;
+            to=*)             to="${1#to=}" ;;
+            pickup_after=*)   pa="${1#pickup_after=}" ;;
+            pickup_before=*)  pb="${1#pickup_before=}" ;;
+            deliver_before=*) db="${1#deliver_before=}" ;;
+        esac
+        shift
+    done
+
+    local from_norm to_norm
+    from_norm=$(normalize_city_list "$from")
+    to_norm=$(normalize_city_list "$to")
+
+    local hertz_resp driveback_resp
+    hertz_resp=$(curl -s -f --max-time 20 "$HERTZ_API" 2>/dev/null || echo "[]")
+    driveback_resp=$(curl -s -f --max-time 20 "$DRIVEBACK_URL" 2>/dev/null || echo "[]")
+
+    # Inline-Match gegen die /search-Args (kein Zugriff auf filters.json)
+    search_match() {
+        local fc tc pickup deliver
+        fc=$(normalize_city "$1")
+        tc=$(normalize_city "$2")
+        pickup="${3:0:10}"
+        deliver="${4:0:10}"
+        if [ -n "$from_norm" ] && [[ ",${from_norm}," != *",${fc},"* ]]; then return 1; fi
+        if [ -n "$to_norm"   ] && [[ ",${to_norm},"   != *",${tc},"* ]]; then return 1; fi
+        if [ -n "$pa" ] && [[ "$pickup"  < "$pa" ]]; then return 1; fi
+        if [ -n "$pb" ] && [[ "$pickup"  > "$pb" ]]; then return 1; fi
+        if [ -n "$db" ] && [[ "$deliver" > "$db" ]]; then return 1; fi
+        return 0
+    }
+
+    local hits=""
+    local total=0
+    local shown=0
+    local LIMIT=20
+
+    while IFS='|' read -r p_city r_city car avail latest; do
+        [ -z "$p_city" ] && continue
+        if search_match "$p_city" "$r_city" "$avail" "$latest"; then
+            total=$((total + 1))
+            if [ "$shown" -lt "$LIMIT" ]; then
+                hits+="• ${p_city} → ${r_city}, Pickup ${avail:0:10}, bis ${latest:0:10}, ${car}"$'\n'
+                shown=$((shown + 1))
+            fi
+        fi
+    done < <(echo "$hertz_resp" | jq -r '
+        .[].routes[]? |
+        "\(.pickupLocation.city // .pickupLocation.name)|\(.returnLocation.city // .returnLocation.name)|\(.carModel)|\(.availableAt)|\(.latestReturn // "")"
+    ' 2>/dev/null)
+
+    while IFS='|' read -r f_city t_city car first_pu last_dlv; do
+        [ -z "$f_city" ] && continue
+        if search_match "$f_city" "$t_city" "$first_pu" "$last_dlv"; then
+            total=$((total + 1))
+            if [ "$shown" -lt "$LIMIT" ]; then
+                hits+="• ${f_city} → ${t_city}, Pickup ${first_pu:0:10}, bis ${last_dlv:0:10}, ${car}"$'\n'
+                shown=$((shown + 1))
+            fi
+        fi
+    done < <(echo "$driveback_resp" | jq -r '
+        .[]? |
+        "\(.from_station.location.city)|\(.to_stations[0].location.city)|\(.vehicle.car_model)|\(.first_pickup)|\(.last_deliver // "")"
+    ' 2>/dev/null)
+
+    if [ "$total" -eq 0 ]; then
+        send_message "$cid" "🔍 Keine Treffer für deine Suche.
+
+Argumente:
+from: ${from_norm:-(beliebig)}
+to: ${to_norm:-(beliebig)}
+pickup_after: ${pa:-(egal)}
+pickup_before: ${pb:-(egal)}
+deliver_before: ${db:-(egal)}"
+        return
+    fi
+
+    local more=""
+    if [ "$total" -gt "$LIMIT" ]; then
+        more=$'\n'"... noch $((total - LIMIT)) weitere — Filter verfeinern für vollständige Liste."
+    fi
+
+    send_message "$cid" "🔍 ${total} Treffer:
+
+${hits}${more}"
+}
+
+# ---------------------------------------------------------------------------
 # Filter-Match-Logik (jq-basiert, OR über Filter, AND innerhalb)
 # ---------------------------------------------------------------------------
 
@@ -357,6 +454,7 @@ process_updates() {
             /clear)        cmd_clear        "$chat_id" ;;
             /addfilter)    cmd_addfilter    "$chat_id" $args ;;
             /removefilter) cmd_removefilter "$chat_id" $args ;;
+            /search)       cmd_search       "$chat_id" $args ;;
             "")            ;;
             *)             ;;
         esac
